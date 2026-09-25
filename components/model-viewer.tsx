@@ -6,11 +6,12 @@ import {
   type Circle,
   type Unit,
   formatLength,
+  findEdgeLoop,
 } from '../lib/measurement';
 
 export type Measurement = {
   id: number;
-  kind: 'distance' | 'diameter';
+  kind: 'distance' | 'diameter' | 'loop';
   value: number;
   points: T.Vector3[];
   circle?: Circle;
@@ -30,10 +31,11 @@ type Props = {
   grid: boolean;
   selected: number | null;
   onSelectHole?: (index: number | null) => void;
-  mode: 'orbit' | 'distance' | 'diameter';
+  mode: 'orbit' | 'distance' | 'diameter' | 'loop';
   picked: T.Vector3[];
   measurements: Measurement[];
   onPick: (point: T.Vector3) => void;
+  onMeasureLoop?: (loop: Circle) => void;
   onError: (message: string) => void;
   api: React.RefObject<ViewerApi | null>;
 };
@@ -216,15 +218,19 @@ export default function ModelViewer(props: Props) {
       label(a.clone().add(b).multiplyScalar(0.5), text, color);
     };
     const circle = (c: Circle, color: string) => {
-      const u = c.points[0].clone().sub(c.center).normalize(),
-        v = new T.Vector3().crossVectors(c.normal, u).normalize();
-      const points = Array.from({ length: 97 }, (_, i) =>
-        c.center
-          .clone()
-          .addScaledVector(u, c.radius * Math.cos((i * Math.PI) / 48))
-          .addScaledVector(v, c.radius * Math.sin((i * Math.PI) / 48)),
-      );
-      line(points, color);
+      if (c.isCircular === false && c.points?.length > 2) {
+        line([...c.points, c.points[0]], color);
+      } else {
+        const u = c.points[0].clone().sub(c.center).normalize(),
+          v = new T.Vector3().crossVectors(c.normal, u).normalize();
+        const points = Array.from({ length: 97 }, (_, i) =>
+          c.center
+            .clone()
+            .addScaledVector(u, c.radius * Math.cos((i * Math.PI) / 48))
+            .addScaledVector(v, c.radius * Math.sin((i * Math.PI) / 48)),
+        );
+        line(points, color);
+      }
     };
     const updateAnnotations = () => {
       const p = latest.current;
@@ -304,19 +310,29 @@ export default function ModelViewer(props: Props) {
             centerDot.position.copy(c.center);
             annotations.add(centerDot);
 
-            // Prominent diameter dimension across the hole
-            const d1 = c.center.clone().addScaledVector(u, -c.radius);
-            const d2 = c.center.clone().addScaledVector(u, c.radius);
-            dimension(
-              d1,
-              d2,
-              `Hole ${i + 1} Ø ${fmt(c.radius * 2)}`,
-              '#ffffff',
-            );
+            if (c.isCircular === false) {
+              const labelLoc = c.center
+                .clone()
+                .addScaledVector(c.normal, max * 0.06);
+              label(
+                labelLoc,
+                `${c.kind === 'slot' ? 'Slot' : 'Loop'} ${i + 1}: ${fmt(c.length!)} × ${fmt(c.width!)} (P: ${fmt(c.perimeter!)})`,
+                '#ffffff',
+              );
+            } else {
+              const d1 = c.center.clone().addScaledVector(u, -c.radius);
+              const d2 = c.center.clone().addScaledVector(u, c.radius);
+              dimension(
+                d1,
+                d2,
+                `Hole ${i + 1} Ø ${fmt(c.radius * 2)}`,
+                '#ffffff',
+              );
+            }
 
             const centerLabelLoc = c.center
               .clone()
-              .addScaledVector(c.normal, max * 0.07);
+              .addScaledVector(c.normal, max * 0.09);
             label(
               centerLabelLoc,
               `Center: (${fmt(c.center.x)}, ${fmt(c.center.y)}, ${fmt(c.center.z)})`,
@@ -326,9 +342,13 @@ export default function ModelViewer(props: Props) {
             const location = c.center
               .clone()
               .addScaledVector(c.normal, max * 0.06);
+            const holeText =
+              c.isCircular === false
+                ? `${String(i + 1).padStart(2, '0')} · ${c.kind === 'slot' ? 'Slot' : 'Loop'} ${fmt(c.length!)}×${fmt(c.width!)}`
+                : `${String(i + 1).padStart(2, '0')} · Ø ${fmt(c.radius * 2)}`;
             label(
               location,
-              `${String(i + 1).padStart(2, '0')} · Ø ${fmt(c.radius * 2)}`,
+              holeText,
               color,
               () => p.onSelectHole?.(i),
             );
@@ -344,7 +364,20 @@ export default function ModelViewer(props: Props) {
         label(point, `${i + 1}`, '#ffce82');
       });
       for (const m of p.measurements) {
-        if (m.circle) {
+        if (m.kind === 'loop' && m.points?.length > 2) {
+          line([...m.points, m.points[0]], '#ffce82');
+          const center = m.circle?.center ?? m.points[0];
+          const dot = new T.Mesh(
+            new T.SphereGeometry(max * 0.007),
+            new T.MeshBasicMaterial({ color: 0xffce82, depthTest: false }),
+          );
+          dot.position.copy(center);
+          annotations.add(dot);
+          const loopLabel = m.delta
+            ? `Loop ${fmt(m.delta.x)} × ${fmt(m.delta.y)} · P: ${fmt(m.value)}`
+            : `Loop P: ${fmt(m.value)}`;
+          label(center, loopLabel, '#ffce82');
+        } else if (m.circle) {
           circle(m.circle, '#ffce82');
           label(m.circle.center, `Ø ${fmt(m.value)}`, '#ffce82');
         } else dimension(m.points[0], m.points[1], fmt(m.value), '#ffce82');
@@ -431,6 +464,17 @@ export default function ModelViewer(props: Props) {
         });
         if (bestHole !== null) {
           latest.current.onSelectHole?.(bestHole);
+        }
+        return;
+      }
+      if (latest.current.mode === 'loop') {
+        const hit = ray.intersectObject(mesh)[0];
+        if (!hit) return;
+        const loop = findEdgeLoop(latest.current.model.geometry, hit.point);
+        if (loop) {
+          latest.current.onMeasureLoop?.(loop);
+        } else {
+          latest.current.onError('No closed sharp-edge loop found near this point.');
         }
         return;
       }

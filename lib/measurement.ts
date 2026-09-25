@@ -14,6 +14,11 @@ export type Circle = {
   normal: T.Vector3;
   radius: number;
   points: T.Vector3[];
+  isCircular?: boolean;
+  perimeter?: number;
+  width?: number;
+  length?: number;
+  kind?: 'circle' | 'slot' | 'loop';
 };
 export type Model = {
   geometry: T.BufferGeometry;
@@ -126,57 +131,235 @@ export function detectHoles(geometry: T.BufferGeometry): Circle[] {
       const next: Edge[] = adjacency.get(current) ?? [];
       edge = next.length === 2 ? next.find((e) => !visited.has(e)) : undefined;
     }
-    if (current !== path[0] || path.length < 12) continue;
+    if (current !== path[0] || path.length < 3) continue;
     const points = path.map((id) => vertices[id]);
-    const circle = circleFromThree(
-      points[0],
-      points[Math.floor(points.length / 3)],
-      points[Math.floor((points.length * 2) / 3)],
-    );
-    if (!circle || circle.radius < tolerance * 10) continue;
-    if (
-      points.some(
-        (p) =>
-          Math.abs(p.distanceTo(circle.center) - circle.radius) >
-            circle.radius * 0.012 ||
-          Math.abs(p.clone().sub(circle.center).dot(circle.normal)) >
-            tolerance * 4,
-      )
-    )
+    let perimeter = 0;
+    for (let i = 0; i < points.length; i++)
+      perimeter += points[i].distanceTo(points[(i + 1) % points.length]);
+    if (perimeter < tolerance * 10) continue;
+
+    const center = new T.Vector3();
+    for (const p of points) center.add(p);
+    center.divideScalar(points.length);
+
+    const normal = new T.Vector3();
+    for (let i = 0; i < points.length; i++) {
+      const p1 = points[i], p2 = points[(i + 1) % points.length];
+      normal.x += (p1.y - p2.y) * (p1.z + p2.z);
+      normal.y += (p1.z - p2.z) * (p1.x + p2.x);
+      normal.z += (p1.x - p2.x) * (p1.y + p2.y);
+    }
+    if (normal.lengthSq() < 1e-12) continue;
+    normal.normalize();
+
+    if (points.some((p) => Math.abs(p.clone().sub(center).dot(normal)) > tolerance * 20))
       continue;
-    let inward = 0,
-      walls = 0;
+
+    let inward = 0, walls = 0;
     for (const e of loop)
-      for (const normal of e.normals) {
-        if (Math.abs(normal.dot(circle.normal)) > 0.35) continue;
-        const radial = vertices[e.a]
-          .clone()
-          .add(vertices[e.b])
-          .multiplyScalar(0.5)
-          .sub(circle.center)
-          .normalize();
-        inward += normal.dot(radial);
+      for (const edgeNormal of e.normals) {
+        if (Math.abs(edgeNormal.dot(normal)) > 0.35) continue;
+        const radial = vertices[e.a].clone().add(vertices[e.b]).multiplyScalar(0.5).sub(center).normalize();
+        inward += edgeNormal.dot(radial);
         walls++;
       }
-    if (!walls || inward / walls > -0.7) continue;
-    circle.points = points;
-    // Opposite openings of a through-hole share an axis and radius.
+    if (!walls || inward / walls > -0.6) continue;
+
+    let isCircular = false;
+    const circle = path.length >= 8
+      ? circleFromThree(points[0], points[Math.floor(points.length / 3)], points[Math.floor((points.length * 2) / 3)])
+      : null;
+    if (
+      circle &&
+      circle.radius >= tolerance * 5 &&
+      !points.some(
+        (p) =>
+          Math.abs(p.distanceTo(circle.center) - circle.radius) > circle.radius * 0.015 ||
+          Math.abs(p.clone().sub(circle.center).dot(circle.normal)) > tolerance * 4,
+      )
+    ) {
+      isCircular = true;
+    }
+
+    let farPoint = points[0], maxDist = 0;
+    for (const p of points) {
+      const d = p.distanceTo(center);
+      if (d > maxDist) { maxDist = d; farPoint = p; }
+    }
+    const u = farPoint.clone().sub(center).normalize();
+    const v = new T.Vector3().crossVectors(normal, u).normalize();
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (const p of points) {
+      const rel = p.clone().sub(center);
+      const pu = rel.dot(u), pv = rel.dot(v);
+      minU = Math.min(minU, pu); maxU = Math.max(maxU, pu);
+      minV = Math.min(minV, pv); maxV = Math.max(maxV, pv);
+    }
+    const length = isCircular && circle ? circle.radius * 2 : maxU - minU;
+    const width = isCircular && circle ? circle.radius * 2 : maxV - minV;
+    const radius = isCircular && circle ? circle.radius : Math.max(length, width) / 2;
+    const kind: 'circle' | 'slot' | 'loop' = isCircular
+      ? 'circle'
+      : Math.abs(length - width) / Math.max(length, width, 1e-6) > 0.15 ? 'slot' : 'loop';
+
+    const feature: Circle = {
+      center: isCircular && circle ? circle.center : center,
+      normal: isCircular && circle ? circle.normal : normal,
+      radius,
+      points,
+      isCircular,
+      perimeter,
+      length,
+      width,
+      kind,
+    };
+
+    // Opposite openings of a through-feature share an axis and perimeter.
     if (
       circles.some(
         (c) =>
-          Math.abs(c.radius - circle.radius) < tolerance * 10 &&
-          Math.abs(c.normal.dot(circle.normal)) > 0.999 &&
-          new T.Vector3()
-            .crossVectors(c.center.clone().sub(circle.center), circle.normal)
-            .length() <
-            tolerance * 10,
+          Math.abs((c.perimeter ?? c.radius * 2 * Math.PI) - feature.perimeter!) < tolerance * 10 &&
+          Math.abs(c.normal.dot(feature.normal)) > 0.999 &&
+          new T.Vector3().crossVectors(c.center.clone().sub(feature.center), feature.normal).length() < tolerance * 10,
       )
     )
       continue;
-    circles.push(circle);
+    circles.push(feature);
   }
   return circles.sort((a, b) => b.radius - a.radius);
 }
+
+export function findEdgeLoop(
+  geometry: T.BufferGeometry,
+  seedPoint: T.Vector3,
+): Circle | null {
+  const pos = geometry.getAttribute('position');
+  const box = new T.Box3().setFromBufferAttribute(pos as T.BufferAttribute);
+  const maxDim = box.getSize(new T.Vector3()).length();
+  const tolerance = Math.max(maxDim * 1e-6, 1e-8);
+  const vertices: T.Vector3[] = [], ids = new Map<string, number>();
+  const vertex = (i: number) => {
+    const p = new T.Vector3().fromBufferAttribute(pos, i);
+    const key = p.toArray().map((x) => Math.round(x / tolerance)).join(',');
+    if (!ids.has(key)) { ids.set(key, vertices.length); vertices.push(p); }
+    return ids.get(key)!;
+  };
+  type Edge = { a: number; b: number; normals: T.Vector3[] };
+  const edges = new Map<string, Edge>();
+  const index = geometry.index;
+  for (let i = 0; i < (index?.count ?? pos.count); i += 3) {
+    const vs = [0, 1, 2].map((j) => vertex(index ? index.getX(i + j) : i + j));
+    const normal = new T.Vector3().crossVectors(
+      vertices[vs[1]].clone().sub(vertices[vs[0]]),
+      vertices[vs[2]].clone().sub(vertices[vs[0]]),
+    ).normalize();
+    for (let j = 0; j < 3; j++) {
+      const a = vs[j], b = vs[(j + 1) % 3], key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      const edge = edges.get(key) ?? { a, b, normals: [] };
+      edge.normals.push(normal);
+      edges.set(key, edge);
+    }
+  }
+  const sharp = [...edges.values()].filter(
+    (e) => e.normals.length === 1 || (e.normals.length === 2 && e.normals[0].dot(e.normals[1]) < Math.cos(Math.PI / 6)),
+  );
+  if (!sharp.length) return null;
+
+  let closestEdge: Edge | null = null, closestDist = Infinity;
+  for (const e of sharp) {
+    const mid = vertices[e.a].clone().add(vertices[e.b]).multiplyScalar(0.5);
+    const dist = mid.distanceTo(seedPoint);
+    if (dist < closestDist) { closestDist = dist; closestEdge = e; }
+  }
+  if (!closestEdge || closestDist > maxDim * 0.25) return null;
+
+  const adjacency = new Map<number, Edge[]>();
+  for (const e of sharp)
+    for (const v of [e.a, e.b])
+      adjacency.set(v, [...(adjacency.get(v) ?? []), e]);
+
+  const visited = new Set<Edge>();
+  const path: number[] = [closestEdge.a];
+  let current = closestEdge.a, edge: Edge | undefined = closestEdge;
+  while (edge && !visited.has(edge)) {
+    visited.add(edge);
+    current = edge.a === current ? edge.b : edge.a;
+    if (current === path[0]) break;
+    path.push(current);
+    const next: Edge[] = adjacency.get(current) ?? [];
+    edge = next.length === 2 ? next.find((e) => !visited.has(e)) : undefined;
+  }
+  if (current !== path[0] || path.length < 3) return null;
+  const points = path.map((id) => vertices[id]);
+
+  let perimeter = 0;
+  for (let i = 0; i < points.length; i++)
+    perimeter += points[i].distanceTo(points[(i + 1) % points.length]);
+
+  const center = new T.Vector3();
+  for (const p of points) center.add(p);
+  center.divideScalar(points.length);
+
+  const normal = new T.Vector3();
+  for (let i = 0; i < points.length; i++) {
+    const p1 = points[i], p2 = points[(i + 1) % points.length];
+    normal.x += (p1.y - p2.y) * (p1.z + p2.z);
+    normal.y += (p1.z - p2.z) * (p1.x + p2.x);
+    normal.z += (p1.x - p2.x) * (p1.y + p2.y);
+  }
+  if (normal.lengthSq() < 1e-12) return null;
+  normal.normalize();
+
+  let isCircular = false;
+  const circle = path.length >= 8
+    ? circleFromThree(points[0], points[Math.floor(points.length / 3)], points[Math.floor((points.length * 2) / 3)])
+    : null;
+  if (
+    circle &&
+    circle.radius >= tolerance * 5 &&
+    !points.some(
+      (p) =>
+        Math.abs(p.distanceTo(circle.center) - circle.radius) > circle.radius * 0.015 ||
+        Math.abs(p.clone().sub(circle.center).dot(circle.normal)) > tolerance * 4,
+    )
+  ) {
+    isCircular = true;
+  }
+
+  let farPoint = points[0], maxDist = 0;
+  for (const p of points) {
+    const d = p.distanceTo(center);
+    if (d > maxDist) { maxDist = d; farPoint = p; }
+  }
+  const u = farPoint.clone().sub(center).normalize();
+  const v = new T.Vector3().crossVectors(normal, u).normalize();
+  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+  for (const p of points) {
+    const rel = p.clone().sub(center);
+    const pu = rel.dot(u), pv = rel.dot(v);
+    minU = Math.min(minU, pu); maxU = Math.max(maxU, pu);
+    minV = Math.min(minV, pv); maxV = Math.max(maxV, pv);
+  }
+  const length = isCircular && circle ? circle.radius * 2 : maxU - minU;
+  const width = isCircular && circle ? circle.radius * 2 : maxV - minV;
+  const radius = isCircular && circle ? circle.radius : Math.max(length, width) / 2;
+  const kind: 'circle' | 'slot' | 'loop' = isCircular
+    ? 'circle'
+    : Math.abs(length - width) / Math.max(length, width, 1e-6) > 0.15 ? 'slot' : 'loop';
+
+  return {
+    center: isCircular && circle ? circle.center : center,
+    normal: isCircular && circle ? circle.normal : normal,
+    radius,
+    points,
+    isCircular,
+    perimeter,
+    length,
+    width,
+    kind,
+  };
+}
+
 
 export function prepareModel(root: T.Object3D): Model {
   root.updateMatrixWorld(true);

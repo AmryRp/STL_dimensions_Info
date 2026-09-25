@@ -9,6 +9,7 @@ import {
   demoModel,
   prepareModel,
   circleFromThree,
+  findEdgeLoop,
   UNITS,
   formatLength,
 } from '../lib/measurement';
@@ -127,6 +128,18 @@ test('hole measurements derive diameter, radius, circumference, area, and center
   assert.ok(Math.abs(fromLeft - 45) < 1e-4);
   assert.ok(Math.abs(fromRight - 45) < 1e-4);
   m.geometry.dispose();
+test('auto edge loop traces closed sharp-edge loops from seed point', () => {
+  const m = demoModel();
+  // Center hole rim is around (0, 0, 8) with radius 14
+  const seed = new T.Vector3(14, 0, 8);
+  const loop = findEdgeLoop(m.geometry, seed);
+  assert.ok(loop);
+  assert.ok(loop.isCircular);
+  close(loop.radius * 2, 28);
+  assert.ok(loop.perimeter! > 80);
+  m.geometry.dispose();
+});
+
 });
 test('invalid and empty geometry fail intentionally', () => {
   assert.throws(() => prepareModel(new T.Group()), /No triangle/);

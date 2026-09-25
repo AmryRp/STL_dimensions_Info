@@ -19,6 +19,7 @@ import {
   Maximize,
   LoaderCircle,
   Plus,
+  Spline,
 } from 'lucide-react';
 import * as T from 'three';
 import ModelViewer, {
@@ -29,10 +30,12 @@ import ModelViewer, {
 import {
   demoModel,
   circleFromThree,
+  findEdgeLoop,
   UNITS,
   formatLength,
   type Unit,
   type Model,
+  type Circle,
 } from '../lib/measurement';
 import { loadModel } from '../lib/load-model';
 
@@ -51,7 +54,7 @@ export default function App() {
     [grid, setGrid] = useState(true),
     [wireframe, setWireframe] = useState(false);
   const [selected, setSelected] = useState<number | null>(0),
-    [mode, setMode] = useState<'orbit' | 'distance' | 'diameter'>('orbit');
+    [mode, setMode] = useState<'orbit' | 'distance' | 'diameter' | 'loop'>('orbit');
   const [picked, setPicked] = useState<T.Vector3[]>([]),
     [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [busy, setBusy] = useState(false),
@@ -142,6 +145,24 @@ export default function App() {
     },
     [mode, picked],
   );
+  const onMeasureLoop = useCallback((loop: Circle) => {
+    const perimeter = loop.perimeter ?? loop.radius * 2 * Math.PI;
+    const length = loop.length ?? loop.radius * 2;
+    const width = loop.width ?? loop.radius * 2;
+    setMeasurements((prev) => [
+      ...prev,
+      {
+        id: ++counter.current,
+        kind: 'loop',
+        value: perimeter,
+        points: loop.points,
+        circle: loop,
+        delta: new T.Vector3(length, width, perimeter),
+      },
+    ]);
+    setError('');
+  }, []);
+
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -180,6 +201,9 @@ export default function App() {
           name,
           unit,
           precision,
+          overallDimensions: model
+            ? `${fmt(model.size.x)} × ${fmt(model.size.y)} × ${fmt(model.size.z)} ${unit}`
+            : null,
           dimensions: model?.size
             .toArray()
             .map((v) => (v * UNITS[sourceUnit]) / UNITS[unit]),
@@ -195,20 +219,38 @@ export default function App() {
           holeDiameters: model?.holes.map(
             (h) => (h.radius * 2 * UNITS[sourceUnit]) / UNITS[unit],
           ),
+          holes: model?.holes.map((h, i) => ({
+            index: i + 1,
+            isCircular: h.isCircular !== false,
+            kind: h.kind ?? 'circle',
+            diameter: (h.radius * 2 * UNITS[sourceUnit]) / UNITS[unit],
+            length: ((h.length ?? h.radius * 2) * UNITS[sourceUnit]) / UNITS[unit],
+            width: ((h.width ?? h.radius * 2) * UNITS[sourceUnit]) / UNITS[unit],
+            perimeter: ((h.perimeter ?? h.radius * 2 * Math.PI) * UNITS[sourceUnit]) / UNITS[unit],
+          })),
           selectedHole:
             selected !== null && model?.holes[selected]
               ? {
                   index: selected + 1,
+                  isCircular: model.holes[selected].isCircular !== false,
+                  kind: model.holes[selected].kind ?? 'circle',
                   diameter:
                     (model.holes[selected].radius * 2 * UNITS[sourceUnit]) /
+                    UNITS[unit],
+                  length:
+                    ((model.holes[selected].length ?? model.holes[selected].radius * 2) *
+                      UNITS[sourceUnit]) /
+                    UNITS[unit],
+                  width:
+                    ((model.holes[selected].width ?? model.holes[selected].radius * 2) *
+                      UNITS[sourceUnit]) /
                     UNITS[unit],
                   radius:
                     (model.holes[selected].radius * UNITS[sourceUnit]) /
                     UNITS[unit],
                   circumference:
-                    (2 *
-                      Math.PI *
-                      model.holes[selected].radius *
+                    ((model.holes[selected].perimeter ??
+                      2 * Math.PI * model.holes[selected].radius) *
                       UNITS[sourceUnit]) /
                     UNITS[unit],
                   center: {
@@ -343,6 +385,12 @@ export default function App() {
           <span className="divider" />
           3D measurement studio
         </div>
+        {model && (
+          <div className="topbar-dims" title="Overall dimensions (Width × Depth × Height)">
+            <span className="topbar-dims-label">Overall:</span>
+            <strong>{fmt(model.size.x)} × {fmt(model.size.y)} × {fmt(model.size.z)} {unit}</strong>
+          </div>
+        )}
         <div className="top-actions">
           <span className="privacy">
             <span className="status-dot" />
@@ -380,20 +428,27 @@ export default function App() {
       <main className="workspace">
         <section className="preview-panel" aria-label="3D preview">
           <div className="preview-heading">
-            <div>
+            <div className="preview-title-wrap">
               <div className="eyebrow">MODEL WORKSPACE</div>
-              <h1>
-                {name} {isDemo && <span className="sample-badge">SAMPLE</span>}
-              </h1>
+              <div className="preview-title-row">
+                <h1>
+                  {name} {isDemo && <span className="sample-badge">SAMPLE</span>}
+                </h1>
+                {model && (
+                  <span className="bbox-pill" title="Bounding box: Width (X) × Depth (Y) × Height (Z)">
+                    {fmt(model.size.x)} × {fmt(model.size.y)} × {fmt(model.size.z)} {unit}
+                  </span>
+                )}
+              </div>
             </div>
             <button
               className="quiet-button export"
               onClick={() => api.current?.export()}
               disabled={!model || busy}
             >
-              <Download size={16} />
+              <Download size={15} />
               Save image
-              <ArrowUpRight size={14} />
+              <ArrowUpRight size={13} />
             </button>
           </div>
           <div className="viewport">
@@ -420,6 +475,7 @@ export default function App() {
                 picked={picked}
                 measurements={measurements}
                 onPick={onPick}
+                onMeasureLoop={onMeasureLoop}
                 onError={setError}
                 api={api}
               />
@@ -470,6 +526,15 @@ export default function App() {
               >
                 <CircleDashed size={20} />
               </button>
+              <button
+                title="Auto edge loop measurement (Click near any edge loop)"
+                aria-label="Auto edge loop measurement"
+                aria-pressed={mode === 'loop'}
+                className={mode === 'loop' ? 'active' : ''}
+                onClick={() => selectMode(mode === 'loop' ? 'orbit' : 'loop')}
+              >
+                <Spline size={19} />
+              </button>
               <span />
               <button
                 title="Reset view"
@@ -490,7 +555,9 @@ export default function App() {
                 <span className="status-dot" />
                 {mode === 'distance'
                   ? `Select ${picked.length === 0 ? 'first' : 'second'} point on the model`
-                  : `Select rim point ${picked.length + 1} of 3`}
+                  : mode === 'diameter'
+                    ? `Select rim point ${picked.length + 1} of 3`
+                    : 'Click near any hole or edge loop to measure'}
                 <button
                   onClick={() => selectMode('orbit')}
                   aria-label="Stop measuring"
@@ -520,21 +587,23 @@ export default function App() {
               triangles
             </span>
           </div>
-          <div className="import-strip">
-            <div className="import-glyph">
-              <Layers3 size={23} />
+          {!model && (
+            <div className="import-strip">
+              <div className="import-glyph">
+                <Layers3 size={23} />
+              </div>
+              <div>
+                <strong>Your next print, from every angle.</strong>
+                <p>
+                  Drop a model anywhere, or{' '}
+                  <button onClick={() => input.current?.click()}>
+                    browse files
+                  </button>
+                </p>
+              </div>
+              <span className="formats">STL · 3MF · OBJ · GLB · GLTF</span>
             </div>
-            <div>
-              <strong>Your next print, from every angle.</strong>
-              <p>
-                Drop a model anywhere, or{' '}
-                <button onClick={() => input.current?.click()}>
-                  browse files
-                </button>
-              </p>
-            </div>
-            <span className="formats">STL · 3MF · OBJ · GLB · GLTF</span>
-          </div>
+          )}
         </section>
         <aside className="inspector">
           <div className="inspector-heading">
@@ -544,123 +613,108 @@ export default function App() {
             </span>
             <span className="live-tag">LIVE</span>
           </div>
-          <section className="inspector-section units-section">
-            <div className="section-heading">
-              <h2>Display units & precision</h2>
-              <Ruler size={16} />
-            </div>
-            <div className="unit-control">
-              <div className="unit-pills">
-                {(['mm', 'cm', 'm'] as Unit[]).map((u) => (
-                  <button
-                    className={unit === u ? 'active' : ''}
-                    key={u}
-                    onClick={() => setUnit(u)}
-                  >
-                    {u}
-                  </button>
-                ))}
+          <div className="inspector-body">
+            <section className="inspector-section units-section">
+              <div className="section-heading">
+                <h2>Display units & precision</h2>
+                <Ruler size={15} />
               </div>
-              <div className="select-wrap">
-                <select
-                  aria-label="Other display units"
-                  value={['mm', 'cm', 'm'].includes(unit) ? '' : unit}
-                  onChange={(e) => setUnit(e.target.value as Unit)}
-                >
-                  <option value="" disabled>
-                    More
-                  </option>
-                  <option value="µm">µm</option>
-                  <option value="in">inches</option>
-                  <option value="ft">feet</option>
-                </select>
-                <ChevronDown size={13} />
-              </div>
-            </div>
-            <div className="precision-control">
-              <span className="precision-label">Precision</span>
-              <div className="precision-pills">
-                {[
-                  { label: '0.1', value: 1 },
-                  { label: '0.01', value: 2 },
-                  { label: '0.001', value: 3 },
-                  { label: '0.0001', value: 4 },
-                ].map((p) => (
-                  <button
-                    className={precision === p.value ? 'active' : ''}
-                    key={p.value}
-                    onClick={() => setPrecision(p.value)}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <label className="toggle-row precision-toggle">
-              <span>Show exact decimals</span>
-              <input
-                type="checkbox"
-                checked={fixedPrecision}
-                onChange={(e) => setFixedPrecision(e.target.checked)}
-              />
-              <span className="toggle" aria-hidden="true" />
-            </label>
-          </section>
-          <section className="inspector-section">
-            <div className="section-heading">
-              <h2>Overall dimensions</h2>
-              <span className="tiny-label">BOUNDING BOX</span>
-            </div>
-            <div className="dimensions-list">
-              {[
-                {
-                  axis: 'x' as const,
-                  label: 'Left to Right',
-                  secondary: 'Width · X',
-                  badge: 'X',
-                },
-                {
-                  axis: 'y' as const,
-                  label: 'Front to Back',
-                  secondary: 'Depth · Y',
-                  badge: 'Y',
-                },
-                {
-                  axis: 'z' as const,
-                  label: 'Top to Bottom',
-                  secondary: 'Height · Z',
-                  badge: 'Z',
-                },
-              ].map(({ axis, label, secondary, badge }) => (
-                <div key={axis} className="dimension-row">
-                  <span className={`axis-badge ${axis}`}>{badge}</span>
-                  <div className="dimension-info">
-                    <span className="dimension-direction">{label}</span>
-                    <span className="dimension-sub">{secondary}</span>
-                  </div>
-                  <strong>
-                    {model ? fmt(model.size[axis]) : '—'}
-                    <small>{unit}</small>
-                  </strong>
+              <div className="unit-control">
+                <div className="unit-pills">
+                  {(['mm', 'cm', 'm'] as Unit[]).map((u) => (
+                    <button
+                      className={unit === u ? 'active' : ''}
+                      key={u}
+                      onClick={() => setUnit(u)}
+                    >
+                      {u}
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
-            {model && (
-              <div className="bbox-summary">
-                <span className="bbox-label">Bounding box (W × D × H)</span>
-                <span className="bbox-value">
-                  {fmt(model.size.x)} × {fmt(model.size.y)} × {fmt(model.size.z)} {unit}
-                </span>
+                <div className="select-wrap">
+                  <select
+                    aria-label="Other display units"
+                    value={['mm', 'cm', 'm'].includes(unit) ? '' : unit}
+                    onChange={(e) => setUnit(e.target.value as Unit)}
+                  >
+                    <option value="" disabled>
+                      More
+                    </option>
+                    <option value="µm">µm</option>
+                    <option value="in">inches</option>
+                    <option value="ft">feet</option>
+                  </select>
+                  <ChevronDown size={13} />
+                </div>
               </div>
-            )}
-            <p className="section-note">
-              Precision bounding box aligned to model axes: X (left–right), Y (front–back), Z (top–bottom).
-            </p>
-          </section>
+              <div className="precision-control">
+                <span className="precision-label">Precision</span>
+                <div className="precision-pills">
+                  {[
+                    { label: '0.1', value: 1 },
+                    { label: '0.01', value: 2 },
+                    { label: '0.001', value: 3 },
+                    { label: '0.0001', value: 4 },
+                  ].map((p) => (
+                    <button
+                      className={precision === p.value ? 'active' : ''}
+                      key={p.value}
+                      onClick={() => setPrecision(p.value)}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="toggle-row precision-toggle">
+                <span>Show exact decimals</span>
+                <input
+                  type="checkbox"
+                  checked={fixedPrecision}
+                  onChange={(e) => setFixedPrecision(e.target.checked)}
+                />
+                <span className="toggle" aria-hidden="true" />
+              </label>
+            </section>
+            <section className="inspector-section compact-dims-section">
+              <div className="section-heading">
+                <h2>Overall dimensions</h2>
+                <span className="tiny-label">BOUNDING BOX</span>
+              </div>
+              <div className="compact-dims-grid">
+                <div className="compact-dim-item x">
+                  <span className="axis-badge x">X</span>
+                  <div className="dim-meta">
+                    <span className="dim-name">Width</span>
+                    <strong>{model ? fmt(model.size.x) : '—'} <small>{unit}</small></strong>
+                  </div>
+                </div>
+                <div className="compact-dim-item y">
+                  <span className="axis-badge y">Y</span>
+                  <div className="dim-meta">
+                    <span className="dim-name">Depth</span>
+                    <strong>{model ? fmt(model.size.y) : '—'} <small>{unit}</small></strong>
+                  </div>
+                </div>
+                <div className="compact-dim-item z">
+                  <span className="axis-badge z">Z</span>
+                  <div className="dim-meta">
+                    <span className="dim-name">Height</span>
+                    <strong>{model ? fmt(model.size.z) : '—'} <small>{unit}</small></strong>
+                  </div>
+                </div>
+              </div>
+              {model && (
+                <div className="bbox-summary-line">
+                  <span>W × D × H:</span>
+                  <strong>{fmt(model.size.x)} × {fmt(model.size.y)} × {fmt(model.size.z)} {unit}</strong>
+                </div>
+              )}
+            </section>
           <section className="inspector-section holes-section">
             <div className="section-heading">
               <h2>
-                Circular holes{' '}
+                Holes & Edge loops{' '}
                 <span className="count-badge">{model?.holes.length ?? 0}</span>
               </h2>
               <span className="detected-label">
@@ -669,38 +723,52 @@ export default function App() {
               </span>
             </div>
             <div className="hole-list">
-              {model?.holes.map((hole, index) => (
-                <button
-                  className={`hole-row ${selected === index ? 'selected' : ''}`}
-                  key={index}
-                  onClick={() => {
-                    setSelected(index === selected ? null : index);
-                    setHoles(true);
-                  }}
-                >
-                  <span className="hole-number">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                  <span>Hole {index + 1}</span>
-                  <strong>
-                    Ø {fmt(hole.radius * 2)}
-                    <small>{unit}</small>
-                  </strong>
-                  {selected === index ? (
-                    <Check size={14} />
-                  ) : (
-                    <span className="hole-check" />
-                  )}
-                </button>
-              ))}
+              {model?.holes.map((hole, index) => {
+                const isCirc = hole.isCircular !== false;
+                return (
+                  <button
+                    className={`hole-row ${selected === index ? 'selected' : ''}`}
+                    key={index}
+                    onClick={() => {
+                      setSelected(index === selected ? null : index);
+                      setHoles(true);
+                    }}
+                  >
+                    <span className="hole-number">
+                      {String(index + 1).padStart(2, '0')}
+                    </span>
+                    <span>
+                      {isCirc
+                        ? `Hole ${index + 1}`
+                        : `${hole.kind === 'slot' ? 'Slot' : 'Loop'} ${index + 1}`}
+                    </span>
+                    <strong>
+                      {isCirc
+                        ? `Ø ${fmt(hole.radius * 2)}`
+                        : `${fmt(hole.length!)} × ${fmt(hole.width!)}`}
+                      <small>{unit}</small>
+                    </strong>
+                    {selected === index ? (
+                      <Check size={14} />
+                    ) : (
+                      <span className="hole-check" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
             {selected !== null && model?.holes[selected] && (() => {
               const h = model.holes[selected];
+              const isCirc = h.isCircular !== false;
               const diam = h.radius * 2;
               const rad = h.radius;
-              const circum = 2 * Math.PI * rad;
+              const circum = isCirc ? 2 * Math.PI * rad : h.perimeter ?? 0;
               const radInDisplayUnit = (rad * UNITS[sourceUnit]) / UNITS[unit];
-              const area = Math.PI * radInDisplayUnit * radInDisplayUnit;
+              const lenInDisplayUnit = ((h.length ?? diam) * UNITS[sourceUnit]) / UNITS[unit];
+              const widInDisplayUnit = ((h.width ?? diam) * UNITS[sourceUnit]) / UNITS[unit];
+              const area = isCirc
+                ? Math.PI * radInDisplayUnit * radInDisplayUnit
+                : lenInDisplayUnit * widInDisplayUnit;
               const areaFormatted = new Intl.NumberFormat('en', {
                 minimumFractionDigits: fixedPrecision ? precision : 0,
                 maximumFractionDigits: precision,
@@ -717,8 +785,14 @@ export default function App() {
                 <div className="selected-hole-card">
                   <div className="selected-hole-header">
                     <div className="selected-hole-title">
-                      <span className="hole-badge">Hole {selected + 1}</span>
-                      <span className="selected-hole-tag">Selected Hole</span>
+                      <span className="hole-badge">
+                        {isCirc
+                          ? `Hole ${selected + 1}`
+                          : `${h.kind === 'slot' ? 'Slot' : 'Loop'} ${selected + 1}`}
+                      </span>
+                      <span className="selected-hole-tag">
+                        {isCirc ? 'Circular Hole' : 'Edge Loop / Slot'}
+                      </span>
                     </div>
                     <button
                       type="button"
@@ -732,19 +806,23 @@ export default function App() {
 
                   <div className="selected-hole-grid">
                     <div className="hole-stat">
-                      <span className="stat-label">Diameter (Ø)</span>
+                      <span className="stat-label">
+                        {isCirc ? 'Diameter (Ø)' : 'Length'}
+                      </span>
                       <strong className="stat-value highlight">
-                        {fmt(diam)} <small>{unit}</small>
+                        {isCirc ? fmt(diam) : fmt(h.length!)} <small>{unit}</small>
                       </strong>
                     </div>
                     <div className="hole-stat">
-                      <span className="stat-label">Radius (R)</span>
+                      <span className="stat-label">
+                        {isCirc ? 'Radius (R)' : 'Width'}
+                      </span>
                       <strong className="stat-value">
-                        {fmt(rad)} <small>{unit}</small>
+                        {isCirc ? fmt(rad) : fmt(h.width!)} <small>{unit}</small>
                       </strong>
                     </div>
                     <div className="hole-stat">
-                      <span className="stat-label">Circumference</span>
+                      <span className="stat-label">Perimeter</span>
                       <strong className="stat-value">
                         {fmt(circum)} <small>{unit}</small>
                       </strong>
@@ -785,15 +863,18 @@ export default function App() {
                       onClick={() => {
                         const newMeasurement: Measurement = {
                           id: ++counter.current,
-                          kind: 'diameter',
-                          value: h.radius * 2,
+                          kind: isCirc ? 'diameter' : 'loop',
+                          value: isCirc ? h.radius * 2 : h.perimeter ?? 0,
                           points: h.points,
                           circle: h,
+                          delta: isCirc
+                            ? undefined
+                            : new T.Vector3(h.length ?? 0, h.width ?? 0, h.perimeter ?? 0),
                         };
                         setMeasurements((prev) => [...prev, newMeasurement]);
                       }}
                     >
-                      <Plus size={14} /> Pin diameter to measurements
+                      <Plus size={14} /> Pin to measurements
                     </button>
                     <button
                       type="button"
@@ -812,24 +893,26 @@ export default function App() {
             {!model?.holes.length && (
               <p className="empty-holes">
                 {model?.detectionSkipped
-                  ? 'Auto-detection is skipped for meshes over 180,000 triangles. Use the diameter tool.'
-                  : 'No circular hole rims detected. Use the three-point diameter tool to measure a rim.'}
+                  ? 'Auto-detection is skipped for meshes over 180,000 triangles. Use measurement tools.'
+                  : 'No circular or slotted loops detected. Use the auto edge loop or diameter tool.'}
               </p>
             )}
-            <p className="section-note">
-              Estimated from circular mesh rims. Chamfers, rough meshes, and
-              curved openings may need manual measurement.
-            </p>
-            <button
-              className={`outline-button full ${mode === 'diameter' ? 'selected' : ''}`}
-              onClick={() =>
-                selectMode(mode === 'diameter' ? 'orbit' : 'diameter')
-              }
-            >
-              <CircleDashed size={16} />
-              Measure diameter manually
-              <ArrowUpRight size={14} />
-            </button>
+            <div className="hole-tools-row">
+              <button
+                className={`outline-button full ${mode === 'loop' ? 'selected' : ''}`}
+                onClick={() => selectMode(mode === 'loop' ? 'orbit' : 'loop')}
+              >
+                <Spline size={15} />
+                Auto edge loop tool
+              </button>
+              <button
+                className={`outline-button full ${mode === 'diameter' ? 'selected' : ''}`}
+                onClick={() => selectMode(mode === 'diameter' ? 'orbit' : 'diameter')}
+              >
+                <CircleDashed size={15} />
+                3-point diameter tool
+              </button>
+            </div>
           </section>
           <section className="inspector-section">
             <div className="section-heading">
@@ -890,7 +973,12 @@ export default function App() {
                 <div className="manual-item" key={m.id}>
                   <div className="manual-row">
                     <span>
-                      {m.kind === 'diameter' ? 'Ø' : 'Distance'} {i + 1}
+                      {m.kind === 'diameter'
+                        ? 'Ø'
+                        : m.kind === 'loop'
+                          ? 'Loop'
+                          : 'Distance'}{' '}
+                      {i + 1}
                     </span>
                     <strong>
                       {fmt(m.value)} <small>{unit}</small>
@@ -906,7 +994,13 @@ export default function App() {
                       <X size={14} />
                     </button>
                   </div>
-                  {m.delta && (
+                  {m.kind === 'loop' && m.delta && (
+                    <div className="manual-delta">
+                      <span>Span: {fmt(m.delta.x)} × {fmt(m.delta.y)} {unit}</span>
+                      <span>Perim: {fmt(m.value)} {unit}</span>
+                    </div>
+                  )}
+                  {m.kind !== 'loop' && m.delta && (
                     <div className="manual-delta">
                       <span>L↔R: {fmt(Math.abs(m.delta.x))} {unit}</span>
                       <span>F↗B: {fmt(Math.abs(m.delta.y))} {unit}</span>
@@ -916,11 +1010,11 @@ export default function App() {
                 </div>
               ))}
               <p className="section-note">
-                Points snap to nearby triangle vertices. Pick three spaced
-                points on the same rim for a diameter.
+                Points snap to nearby triangle vertices. Auto edge loop traces closed sharp rims.
               </p>
             </section>
           )}
+          </div>
           <div className="inspector-bottom">
             <ShieldCheck size={16} />
             <span>Local processing. No account needed.</span>
