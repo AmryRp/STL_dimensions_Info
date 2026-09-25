@@ -100,6 +100,34 @@ test('source scale and output scale convert independently', () => {
   assert.equal(formatLength(25.4, 'in'), '1');
   assert.equal(formatLength(0.008 * UNITS.m, 'mm'), '8');
 });
+test('precision formatting supports selectable decimal places and fixed precision', () => {
+  assert.equal(formatLength(90, 'mm', 3, true), '90.000');
+  assert.equal(formatLength(90, 'mm', 2, true), '90.00');
+  assert.equal(formatLength(90, 'mm', 4, true), '90.0000');
+  assert.equal(formatLength(8.12345, 'mm', 3, true), '8.123');
+  assert.equal(formatLength(8.12345, 'mm', 4, true), '8.1235');
+  assert.equal(formatLength(8.1, 'mm', 3, false), '8.1');
+});
+test('hole measurements derive diameter, radius, circumference, area, and center offsets', () => {
+  const m = demoModel();
+  const hole = m.holes.find((h) => Math.abs(h.radius * 2 - 28) < 1e-4)!;
+  assert.ok(hole);
+  const diameter = hole.radius * 2;
+  const radius = hole.radius;
+  const circumference = 2 * Math.PI * radius;
+  const area = Math.PI * radius * radius;
+  assert.ok(Math.abs(diameter - 28) < 1e-4);
+  assert.ok(Math.abs(radius - 14) < 1e-4);
+  assert.ok(Math.abs(circumference - 28 * Math.PI) < 1e-3);
+  assert.ok(Math.abs(area - 196 * Math.PI) < 1e-3);
+  assert.ok(Math.abs(hole.center.x) < 1e-4);
+  assert.ok(Math.abs(hole.center.y) < 1e-4);
+  const fromLeft = hole.center.x + m.size.x / 2;
+  const fromRight = m.size.x / 2 - hole.center.x;
+  assert.ok(Math.abs(fromLeft - 45) < 1e-4);
+  assert.ok(Math.abs(fromRight - 45) < 1e-4);
+  m.geometry.dispose();
+});
 test('invalid and empty geometry fail intentionally', () => {
   assert.throws(() => prepareModel(new T.Group()), /No triangle/);
   const geometry = new T.BufferGeometry().setAttribute(

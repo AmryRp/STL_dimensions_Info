@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
+import * as T from 'three';
+import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 import { zipSync, strToU8 } from 'three/addons/libs/fflate.module.js';
 import { loadModel } from '../lib/load-model';
+import { demoModel } from '../lib/measurement';
 const window = new Window();
 Object.assign(globalThis, {
   DOMParser: window.DOMParser,
@@ -109,6 +112,17 @@ test('mixed-unit 3MF is rejected rather than assigned a wrong scale', async () =
     loadModel([new File([zip as Uint8Array<ArrayBuffer>], 'part.3mf')]),
     /mixes units/,
   );
+});
+test('STL defaults source scale to meter', async () => {
+  const source = demoModel(),
+    mesh = new T.Mesh(source.geometry),
+    data = new STLExporter().parse(mesh, { binary: true });
+  const result = await loadModel([
+    new File([data.buffer], 'part.stl'),
+  ]);
+  assert.equal(result.sourceUnit, 'm');
+  result.model.geometry.dispose();
+  source.geometry.dispose();
 });
 test('unsupported extension is rejected', async () => {
   await assert.rejects(

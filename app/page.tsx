@@ -18,6 +18,7 @@ import {
   Move3D,
   Maximize,
   LoaderCircle,
+  Plus,
 } from 'lucide-react';
 import * as T from 'three';
 import ModelViewer, {
@@ -41,8 +42,10 @@ export default function App() {
     [isDemo, setIsDemo] = useState(true),
     [bytes, setBytes] = useState(0);
   const [unit, setUnit] = useState<Unit>('mm'),
-    [sourceUnit, setSourceUnit] = useState<Unit>('mm');
-  const [note, setNote] = useState('Sample model · dimensions in millimeters.');
+    [sourceUnit, setSourceUnit] = useState<Unit>('m');
+  const [precision, setPrecision] = useState(3),
+    [fixedPrecision, setFixedPrecision] = useState(true);
+  const [note, setNote] = useState('Default scale in meters. Confirm or change source scale below.');
   const [dimensions, setDimensions] = useState(true),
     [holes, setHoles] = useState(true),
     [grid, setGrid] = useState(true),
@@ -64,7 +67,8 @@ export default function App() {
     setModel(demoModel());
   }, []);
   useEffect(() => () => model?.geometry.dispose(), [model]);
-  const fmt = (value: number) => formatLength(value * UNITS[sourceUnit], unit);
+  const fmt = (value: number) =>
+    formatLength(value * UNITS[sourceUnit], unit, precision, fixedPrecision);
   const load = async (files: File[]) => {
     if (loading.current || !files.length) return;
     loading.current = true;
@@ -108,6 +112,7 @@ export default function App() {
             kind: 'distance',
             value: points[0].distanceTo(points[1]),
             points,
+            delta: new T.Vector3().subVectors(points[1], points[0]),
           },
         ]);
         setPicked([]);
@@ -174,13 +179,79 @@ export default function App() {
         execute: () => ({
           name,
           unit,
+          precision,
           dimensions: model?.size
             .toArray()
             .map((v) => (v * UNITS[sourceUnit]) / UNITS[unit]),
+          leftToRight: model
+            ? (model.size.x * UNITS[sourceUnit]) / UNITS[unit]
+            : 0,
+          frontToBack: model
+            ? (model.size.y * UNITS[sourceUnit]) / UNITS[unit]
+            : 0,
+          topToBottom: model
+            ? (model.size.z * UNITS[sourceUnit]) / UNITS[unit]
+            : 0,
           holeDiameters: model?.holes.map(
             (h) => (h.radius * 2 * UNITS[sourceUnit]) / UNITS[unit],
           ),
+          selectedHole:
+            selected !== null && model?.holes[selected]
+              ? {
+                  index: selected + 1,
+                  diameter:
+                    (model.holes[selected].radius * 2 * UNITS[sourceUnit]) /
+                    UNITS[unit],
+                  radius:
+                    (model.holes[selected].radius * UNITS[sourceUnit]) /
+                    UNITS[unit],
+                  circumference:
+                    (2 *
+                      Math.PI *
+                      model.holes[selected].radius *
+                      UNITS[sourceUnit]) /
+                    UNITS[unit],
+                  center: {
+                    x:
+                      (model.holes[selected].center.x * UNITS[sourceUnit]) /
+                      UNITS[unit],
+                    y:
+                      (model.holes[selected].center.y * UNITS[sourceUnit]) /
+                      UNITS[unit],
+                    z:
+                      (model.holes[selected].center.z * UNITS[sourceUnit]) /
+                      UNITS[unit],
+                  },
+                }
+              : null,
         }),
+      },
+      {
+        name: 'select_hole',
+        description:
+          'Select a detected hole by 1-based index (or null to deselect) to inspect its detailed measurements.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            index: { type: ['integer', 'null'], minimum: 1 },
+          },
+          required: ['index'],
+          additionalProperties: false,
+        },
+        execute: async (input: unknown) => {
+          const idx = (input as { index?: number | null })?.index;
+          if (idx === null || idx === undefined) {
+            setSelected(null);
+            return { selected: null };
+          }
+          if (!model || idx < 1 || idx > model.holes.length)
+            throw new Error(
+              `Hole index out of range. 1 to ${model?.holes.length ?? 0}`,
+            );
+          setSelected(idx - 1);
+          setHoles(true);
+          return { selected: idx };
+        },
       },
       {
         name: 'set_display_unit',
@@ -203,6 +274,30 @@ export default function App() {
           return { unit: value };
         },
       },
+      {
+        name: 'set_precision',
+        description:
+          'Set measurement decimal precision (1 to 4) and fixed decimal display.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            decimals: { type: 'number', minimum: 0, maximum: 6 },
+            fixed: { type: 'boolean' },
+          },
+          required: ['decimals'],
+          additionalProperties: false,
+        },
+        execute: async (input: unknown) => {
+          const val = input as { decimals?: number; fixed?: boolean };
+          if (typeof val.decimals === 'number') {
+            setPrecision(Math.max(0, Math.min(6, Math.round(val.decimals))));
+          }
+          if (typeof val.fixed === 'boolean') {
+            setFixedPrecision(val.fixed);
+          }
+          return { precision: val.decimals, fixed: val.fixed ?? fixedPrecision };
+        },
+      },
     ];
     for (const tool of tools)
       try {
@@ -213,7 +308,7 @@ export default function App() {
         /* Browser implementation is optional. */
       }
     return () => lifecycle.abort();
-  }, [model, name, unit, sourceUnit]);
+  }, [model, name, unit, sourceUnit, precision, fixedPrecision]);
   const chooseView = (next: View) => {
     setView(next);
     api.current?.view(next);
@@ -313,11 +408,14 @@ export default function App() {
                 model={model}
                 unit={unit}
                 scale={UNITS[sourceUnit]}
+                precision={precision}
+                fixedPrecision={fixedPrecision}
                 dimensions={dimensions}
                 showHoles={holes}
                 grid={grid}
                 wireframe={wireframe}
                 selected={selected}
+                onSelectHole={setSelected}
                 mode={mode}
                 picked={picked}
                 measurements={measurements}
@@ -448,7 +546,7 @@ export default function App() {
           </div>
           <section className="inspector-section units-section">
             <div className="section-heading">
-              <h2>Display units</h2>
+              <h2>Display units & precision</h2>
               <Ruler size={16} />
             </div>
             <div className="unit-control">
@@ -479,6 +577,34 @@ export default function App() {
                 <ChevronDown size={13} />
               </div>
             </div>
+            <div className="precision-control">
+              <span className="precision-label">Precision</span>
+              <div className="precision-pills">
+                {[
+                  { label: '0.1', value: 1 },
+                  { label: '0.01', value: 2 },
+                  { label: '0.001', value: 3 },
+                  { label: '0.0001', value: 4 },
+                ].map((p) => (
+                  <button
+                    className={precision === p.value ? 'active' : ''}
+                    key={p.value}
+                    onClick={() => setPrecision(p.value)}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label className="toggle-row precision-toggle">
+              <span>Show exact decimals</span>
+              <input
+                type="checkbox"
+                checked={fixedPrecision}
+                onChange={(e) => setFixedPrecision(e.target.checked)}
+              />
+              <span className="toggle" aria-hidden="true" />
+            </label>
           </section>
           <section className="inspector-section">
             <div className="section-heading">
@@ -486,12 +612,32 @@ export default function App() {
               <span className="tiny-label">BOUNDING BOX</span>
             </div>
             <div className="dimensions-list">
-              {(['x', 'y', 'z'] as const).map((axis, i) => (
+              {[
+                {
+                  axis: 'x' as const,
+                  label: 'Left to Right',
+                  secondary: 'Width · X',
+                  badge: 'X',
+                },
+                {
+                  axis: 'y' as const,
+                  label: 'Front to Back',
+                  secondary: 'Depth · Y',
+                  badge: 'Y',
+                },
+                {
+                  axis: 'z' as const,
+                  label: 'Top to Bottom',
+                  secondary: 'Height · Z',
+                  badge: 'Z',
+                },
+              ].map(({ axis, label, secondary, badge }) => (
                 <div key={axis} className="dimension-row">
-                  <span className={`axis-badge ${axis}`}>
-                    {axis.toUpperCase()}
-                  </span>
-                  <span>{['Width', 'Depth', 'Height'][i]}</span>
+                  <span className={`axis-badge ${axis}`}>{badge}</span>
+                  <div className="dimension-info">
+                    <span className="dimension-direction">{label}</span>
+                    <span className="dimension-sub">{secondary}</span>
+                  </div>
                   <strong>
                     {model ? fmt(model.size[axis]) : '—'}
                     <small>{unit}</small>
@@ -499,8 +645,16 @@ export default function App() {
                 </div>
               ))}
             </div>
+            {model && (
+              <div className="bbox-summary">
+                <span className="bbox-label">Bounding box (W × D × H)</span>
+                <span className="bbox-value">
+                  {fmt(model.size.x)} × {fmt(model.size.y)} × {fmt(model.size.z)} {unit}
+                </span>
+              </div>
+            )}
             <p className="section-note">
-              Aligned to the model axes, independent of your viewing angle.
+              Precision bounding box aligned to model axes: X (left–right), Y (front–back), Z (top–bottom).
             </p>
           </section>
           <section className="inspector-section holes-section">
@@ -540,6 +694,121 @@ export default function App() {
                 </button>
               ))}
             </div>
+            {selected !== null && model?.holes[selected] && (() => {
+              const h = model.holes[selected];
+              const diam = h.radius * 2;
+              const rad = h.radius;
+              const circum = 2 * Math.PI * rad;
+              const radInDisplayUnit = (rad * UNITS[sourceUnit]) / UNITS[unit];
+              const area = Math.PI * radInDisplayUnit * radInDisplayUnit;
+              const areaFormatted = new Intl.NumberFormat('en', {
+                minimumFractionDigits: fixedPrecision ? precision : 0,
+                maximumFractionDigits: precision,
+              }).format(area);
+
+              const fromLeft = h.center.x + model.size.x / 2;
+              const fromRight = model.size.x / 2 - h.center.x;
+              const fromFront = h.center.y + model.size.y / 2;
+              const fromBack = model.size.y / 2 - h.center.y;
+              const fromBottom = h.center.z;
+              const fromTop = model.size.z - h.center.z;
+
+              return (
+                <div className="selected-hole-card">
+                  <div className="selected-hole-header">
+                    <div className="selected-hole-title">
+                      <span className="hole-badge">Hole {selected + 1}</span>
+                      <span className="selected-hole-tag">Selected Hole</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => setSelected(null)}
+                      title="Deselect hole"
+                    >
+                      Deselect
+                    </button>
+                  </div>
+
+                  <div className="selected-hole-grid">
+                    <div className="hole-stat">
+                      <span className="stat-label">Diameter (Ø)</span>
+                      <strong className="stat-value highlight">
+                        {fmt(diam)} <small>{unit}</small>
+                      </strong>
+                    </div>
+                    <div className="hole-stat">
+                      <span className="stat-label">Radius (R)</span>
+                      <strong className="stat-value">
+                        {fmt(rad)} <small>{unit}</small>
+                      </strong>
+                    </div>
+                    <div className="hole-stat">
+                      <span className="stat-label">Circumference</span>
+                      <strong className="stat-value">
+                        {fmt(circum)} <small>{unit}</small>
+                      </strong>
+                    </div>
+                    <div className="hole-stat">
+                      <span className="stat-label">Cross Area</span>
+                      <strong className="stat-value">
+                        {areaFormatted} <small>{unit}²</small>
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="selected-hole-coords">
+                    <span className="coords-title">Center Coordinates</span>
+                    <div className="coords-row">
+                      <span>X: <strong>{fmt(h.center.x)} {unit}</strong></span>
+                      <span>Y: <strong>{fmt(h.center.y)} {unit}</strong></span>
+                      <span>Z: <strong>{fmt(h.center.z)} {unit}</strong></span>
+                    </div>
+                  </div>
+
+                  <div className="selected-hole-offsets">
+                    <span className="coords-title">Offsets to Outer Edges</span>
+                    <div className="offsets-grid">
+                      <div><span>Left (X-):</span> <strong>{fmt(fromLeft)} {unit}</strong></div>
+                      <div><span>Right (X+):</span> <strong>{fmt(fromRight)} {unit}</strong></div>
+                      <div><span>Front (Y-):</span> <strong>{fmt(fromFront)} {unit}</strong></div>
+                      <div><span>Back (Y+):</span> <strong>{fmt(fromBack)} {unit}</strong></div>
+                      <div><span>Bottom (Z-):</span> <strong>{fmt(fromBottom)} {unit}</strong></div>
+                      <div><span>Top (Z+):</span> <strong>{fmt(fromTop)} {unit}</strong></div>
+                    </div>
+                  </div>
+
+                  <div className="selected-hole-actions">
+                    <button
+                      type="button"
+                      className="outline-button full"
+                      onClick={() => {
+                        const newMeasurement: Measurement = {
+                          id: ++counter.current,
+                          kind: 'diameter',
+                          value: h.radius * 2,
+                          points: h.points,
+                          circle: h,
+                        };
+                        setMeasurements((prev) => [...prev, newMeasurement]);
+                      }}
+                    >
+                      <Plus size={14} /> Pin diameter to measurements
+                    </button>
+                    <button
+                      type="button"
+                      className="outline-button full"
+                      onClick={() => {
+                        selectMode('distance');
+                        setPicked([h.center.clone()]);
+                      }}
+                    >
+                      <Ruler size={14} /> Measure distance from center
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
             {!model?.holes.length && (
               <p className="empty-holes">
                 {model?.detectionSkipped
@@ -618,23 +887,32 @@ export default function App() {
                 </button>
               </div>
               {measurements.map((m, i) => (
-                <div className="manual-row" key={m.id}>
-                  <span>
-                    {m.kind === 'diameter' ? 'Ø' : 'Distance'} {i + 1}
-                  </span>
-                  <strong>
-                    {fmt(m.value)} {unit}
-                  </strong>
-                  <button
-                    aria-label={`Remove measurement ${i + 1}`}
-                    onClick={() =>
-                      setMeasurements((prev) =>
-                        prev.filter((x) => x.id !== m.id),
-                      )
-                    }
-                  >
-                    <X size={14} />
-                  </button>
+                <div className="manual-item" key={m.id}>
+                  <div className="manual-row">
+                    <span>
+                      {m.kind === 'diameter' ? 'Ø' : 'Distance'} {i + 1}
+                    </span>
+                    <strong>
+                      {fmt(m.value)} <small>{unit}</small>
+                    </strong>
+                    <button
+                      aria-label={`Remove measurement ${i + 1}`}
+                      onClick={() =>
+                        setMeasurements((prev) =>
+                          prev.filter((x) => x.id !== m.id),
+                        )
+                      }
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  {m.delta && (
+                    <div className="manual-delta">
+                      <span>L↔R: {fmt(Math.abs(m.delta.x))} {unit}</span>
+                      <span>F↗B: {fmt(Math.abs(m.delta.y))} {unit}</span>
+                      <span>T↕B: {fmt(Math.abs(m.delta.z))} {unit}</span>
+                    </div>
+                  )}
                 </div>
               ))}
               <p className="section-note">
@@ -706,10 +984,9 @@ export default function App() {
               not previewed.
             </p>
             <p>
-              <strong>Confirm source scale.</strong> STL and OBJ default to
-              millimeters. GLTF and GLB default to meters; 3MF units come from
-              the file. Change source scale if your exporter used different
-              units.
+              <strong>Confirm source scale.</strong> Source scale defaults to
+              meters. 3MF units come from the file metadata. Change source scale
+              if your exporter used different units.
             </p>
             <p>
               <strong>Inspect holes.</strong> Automatic detection finds circular

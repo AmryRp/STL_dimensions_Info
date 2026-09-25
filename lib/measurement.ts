@@ -22,10 +22,16 @@ export type Model = {
   triangles: number;
   detectionSkipped: boolean;
 };
-export const formatLength = (mm: number, unit: Unit) =>
-  new Intl.NumberFormat('en', { maximumFractionDigits: 3 }).format(
-    mm / UNITS[unit],
-  );
+export const formatLength = (
+  mm: number,
+  unit: Unit,
+  decimals: number = 3,
+  fixed: boolean = false,
+) =>
+  new Intl.NumberFormat('en', {
+    minimumFractionDigits: fixed ? decimals : 0,
+    maximumFractionDigits: decimals,
+  }).format(mm / UNITS[unit]);
 
 export function circleFromThree(
   a: T.Vector3,

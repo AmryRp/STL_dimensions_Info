@@ -499,6 +499,42 @@ a {
   pointer-events: none;
   color: #b1bec0;
 }
+.precision-control {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.precision-label {
+  font-size: 12px;
+  color: #8c9fa2;
+}
+.precision-pills {
+  display: flex;
+  background: #101719;
+  border: 1px solid #354144;
+  border-radius: 6px;
+  padding: 3px;
+  gap: 2px;
+}
+.precision-pills button {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #91a3a6;
+  border-radius: 4px;
+  font-family: 'Space Grotesk', sans-serif;
+}
+.precision-pills button.active {
+  background: #c5f16a;
+  color: #1d2d12;
+  font-weight: 700;
+}
+.precision-toggle {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #2c393c;
+}
 .tiny-label {
   font-size: 9px;
   letter-spacing: 0.8px;
@@ -511,6 +547,20 @@ a {
   font-size: 14px;
   color: #a5b4b7;
   padding: 9px 0;
+}
+.dimension-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.dimension-direction {
+  font-size: 13px;
+  font-weight: 500;
+  color: #e1ebed;
+}
+.dimension-sub {
+  font-size: 11px;
+  color: #7f9397;
 }
 .dimension-row strong {
   margin-left: auto;
@@ -528,6 +578,30 @@ a {
   color: #84999e;
   margin-left: 7px;
   letter-spacing: 0;
+}
+.bbox-summary {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #131b1d;
+  border: 1px solid #2d3b3e;
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bbox-label {
+  font-size: 10px;
+  color: #7f9599;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  font-weight: 600;
+}
+.bbox-value {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #c5f16a;
+  letter-spacing: -0.3px;
 }
 .axis-badge {
   font:
@@ -622,6 +696,120 @@ a {
 .hole-check {
   width: 14px;
   flex-shrink: 0;
+}
+.selected-hole-card {
+  margin-top: 10px;
+  background: #141d1f;
+  border: 1px solid #36484b;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.selected-hole-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.selected-hole-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hole-badge {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: #c5f16a;
+  background: #243521;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid #4a6332;
+}
+.selected-hole-tag {
+  font-size: 11px;
+  color: #8fa3a7;
+  font-weight: 500;
+}
+.selected-hole-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.hole-stat {
+  background: #0f1618;
+  border: 1px solid #29383b;
+  border-radius: 5px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stat-label {
+  font-size: 10px;
+  color: #7b9296;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.stat-value {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 13px;
+  color: #e2ecee;
+  font-weight: 600;
+}
+.stat-value.highlight {
+  color: #c5f16a;
+  font-size: 15px;
+}
+.selected-hole-coords,
+.selected-hole-offsets {
+  background: #0f1618;
+  border: 1px solid #29383b;
+  border-radius: 5px;
+  padding: 8px 10px;
+}
+.coords-title {
+  font-size: 10px;
+  color: #7b9296;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 6px;
+}
+.coords-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #9ab0b3;
+  font-family: 'Space Grotesk', sans-serif;
+}
+.coords-row strong {
+  color: #e2ecee;
+}
+.offsets-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  font-size: 11px;
+  font-family: 'Space Grotesk', sans-serif;
+}
+.offsets-grid span {
+  color: #748c90;
+}
+.offsets-grid strong {
+  color: #dbe7e9;
+  margin-left: 4px;
+}
+.selected-hole-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.selected-hole-actions .outline-button {
+  margin-top: 0;
+  padding: 7px 10px;
 }
 .outline-button {
   display: flex;
@@ -787,11 +975,17 @@ a {
   font-size: 12px;
   color: #c5f16a;
 }
+.manual-item {
+  padding: 8px 0;
+  border-bottom: 1px solid #28373a;
+}
+.manual-item:last-child {
+  border-bottom: 0;
+}
 .manual-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 0;
   font-size: 13px;
 }
 .manual-row > span {
@@ -805,6 +999,21 @@ a {
   padding: 0;
   display: grid;
   place-items: center;
+}
+.manual-delta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #92a6aa;
+  font-family: 'Space Grotesk', sans-serif;
+}
+.manual-delta span {
+  background: #131b1d;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid #28373a;
 }
 .error-toast {
   position: fixed;

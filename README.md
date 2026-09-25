@@ -37,7 +37,7 @@ Alternatively, run `npx vercel` from this directory and follow the login/project
 
 ## Units and import details
 
-STL and OBJ do not encode a physical unit. They default to millimeters; confirm **Source scale** after import. GLTF/GLB use meters and Y-up, which is converted to Z-up for the build space. 3MF units are read from metadata. Changing **Display units** changes labels only. Changing **Source scale** changes the physical interpretation of model coordinates.
+STL and OBJ do not encode a physical unit. They default to meters; confirm **Source scale** after import. GLTF/GLB use meters and Y-up, which is converted to Z-up for the build space. 3MF units are read from metadata. Changing **Display units** changes labels only. Changing **Source scale** changes the physical interpretation of model coordinates.
 
 For multi-file GLTF, select the model and all referenced `.bin` and texture files together. Local assets resolve by relative path or unique filename. Remote asset fetching is blocked. Models using Draco, Meshopt, or KTX2 compression must be exported uncompressed. OBJ geometry is previewed with a neutral material; MTL is unnecessary. 3MF mixed-unit packages are rejected rather than silently mismeasured. Files are limited to 100 MB combined.
 

@@ -16,8 +16,8 @@ export async function loadModel(files: File[]) {
   const buffer = await file.arrayBuffer(),
     urls: string[] = [];
   let root: T.Object3D | undefined,
-    sourceUnit: Unit = 'mm',
-    note = 'Unitless format · confirm the source unit below.';
+    sourceUnit: Unit = 'm',
+    note = 'Unitless format · defaulted to meters. Confirm or change source scale below.';
   try {
     if (extension === 'stl') root = new T.Mesh(new STLLoader().parse(buffer));
     if (extension === 'obj')
